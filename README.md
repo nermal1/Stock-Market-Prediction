@@ -28,3 +28,5 @@ Now that we have the stocks and the data the next step is to clean and scale the
 Using the trained model we can then predict and determine if we should purchase the stock. This is the tricky part on trying to make a profit. Determining when to purchase and sell a stock is a very hard thing to do day by day because of how volitile the market can be. I have set a threshold of 1% to determine if it should purchase or sell the stock. In one day the market will not change very much which is why I chose 1% difference. The S&P 500 changes about 1% in a day on average so anything higher might be difficult to make a profit off of. 
 
 ## Outcome
+As of writing this this will need to be updated and be fixed to show how well this model does. 
+
