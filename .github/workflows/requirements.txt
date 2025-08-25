@@ -1,0 +1,6 @@
+alpaca-py
+pandas
+numpy
+scikit-learn
+tensorflow
+joblib
