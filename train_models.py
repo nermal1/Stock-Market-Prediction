@@ -48,7 +48,8 @@ request_params = StockBarsRequest(
     symbol_or_symbols=symbols,
     timeframe=TimeFrame.Day,
     start=start,
-    end=end
+    end=end,
+    feed="iex"
 )
 bars = data_client.get_stock_bars(request_params).df
 
