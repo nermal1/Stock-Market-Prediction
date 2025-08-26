@@ -18,7 +18,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Download trained models
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: trained-models
           path: trained_models/
