@@ -12,21 +12,21 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
 
-ALPACA_KEY = os.getenv("APCA_API_KEY_ID")
-ALPACA_SECRET = os.getenv("APCA_API_SECRET_KEY")
+from config import symbols, window_size  # ✅ shared config
+
+API_KEY = os.getenv("ALPACA_KEY")
+API_SECRET = os.getenv("ALPACA_SECRET")
 
 data_client = StockHistoricalDataClient(API_KEY, API_SECRET)
 trading_client = TradingClient(API_KEY, API_SECRET, paper=True)
 
-symbols = ["JPM", "KULR", "META", "MS", "MU", "NVDA", "OKLO", "AVGO"]
-window_size = 60
-
+# Account info
 account = trading_client.get_account()
 available_cash = float(account.cash)
 positions = trading_client.get_all_positions()
 held_symbols = {pos.symbol for pos in positions}
 
-# Fetch recent data
+# Get the last year of daily bars
 start = datetime.datetime.now() - datetime.timedelta(days=365)
 end = datetime.datetime.now()
 request_params = StockBarsRequest(
@@ -34,23 +34,17 @@ request_params = StockBarsRequest(
     timeframe=TimeFrame.Day,
     start=start,
     end=end,
-    feed="iex"
+    feed="iex"  # ✅ avoid SIP permission error
 )
 bars = data_client.get_stock_bars(request_params).df
 
-def preprocess_data(df, window_size=60):
-    scaled = scaler.transform(df)
-    X = []
-    for i in range(window_size, len(scaled)):
-        X.append(scaled[i - window_size:i, 0])
-    return np.array(X).reshape(-1, window_size, 1)
-
-def predict_next_price(model, df, scaler, window_size=60):
-    scaled = scaler.transform(df)
-    X = [scaled[-window_size:]]
-    X = np.array(X).reshape(1, window_size, 1)
+def predict_next_price(model, df, scaler):
+    X = scaler.transform(df)[-window_size:]  # last 60 days
+    X = np.array([X]).reshape(1, window_size, 1)
     pred_scaled = model.predict(X, verbose=0)
-    return scaler.inverse_transform([[pred_scaled[0][0]]])[0][0], df[-1][0]
+    predicted = scaler.inverse_transform([[pred_scaled[0][0]]])[0][0]
+    current = df[-1][0]
+    return predicted, current
 
 def generate_signal(predicted, current, threshold=0.01):
     change = (predicted - current) / current
@@ -82,7 +76,7 @@ def execute_trade(symbol, signal, current_price):
     else:
         print(f"HOLD {symbol}")
 
-# Run predictions & trades
+# Loop over tickers
 for symbol in symbols:
     try:
         model = load_model(f"trained_models/{symbol}_lstm_model.h5")
@@ -93,6 +87,7 @@ for symbol in symbols:
 
     df = bars.loc[bars.index.get_level_values("symbol") == symbol, ["close"]].values
     if len(df) < window_size + 1:
+        print(f"Not enough data for {symbol}, skipping.")
         continue
 
     predicted, current = predict_next_price(model, df, scaler)
