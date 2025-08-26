@@ -2,7 +2,8 @@ name: Trade
 
 on:
   schedule:
-    - cron: "0 14,20 * * *"  # 2 times/day UTC
+    - cron: "0 14 * * *"
+    - cron: "30 19 * * *"
   workflow_dispatch:
 
 jobs:
