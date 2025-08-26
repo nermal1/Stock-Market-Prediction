@@ -1,31 +1,49 @@
 import os
+import datetime
 import joblib
 import numpy as np
-import datetime
 import pandas as pd
 from tensorflow.keras.models import load_model
-from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderSide, TimeInForce
-from alpaca.trading.requests import MarketOrderRequest
+
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
-from config import symbols, window_size
+from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest
 
-API_KEY = os.getenv("APCA_API_KEY_ID")
-API_SECRET = os.getenv("APCA_API_SECRET_KEY")
+# -----------------------------
+# CONFIG
+# -----------------------------
+API_KEY = os.getenv("ALPACA_KEY")
+API_SECRET = os.getenv("ALPACA_SECRET")
 
+symbols = ["JPM", "KULR", "META", "MS", "MU", "NVDA", "OKLO", "AVGO"]
+window_size = 60
+RISK_PER_TRADE = 0.03  # 3% of available capital
+TRADE_LOG = "trade_log.csv"
+
+# -----------------------------
+# CLIENTS
+# -----------------------------
 data_client = StockHistoricalDataClient(API_KEY, API_SECRET)
 trading_client = TradingClient(API_KEY, API_SECRET, paper=True)
-models_dir = "trained_models"
 
+# -----------------------------
+# FETCH ACCOUNT INFO
+# -----------------------------
 account = trading_client.get_account()
 available_cash = float(account.cash)
+
 positions = trading_client.get_all_positions()
 held_symbols = {pos.symbol for pos in positions}
 
+# -----------------------------
+# FETCH RECENT DATA
+# -----------------------------
 start = datetime.datetime.now() - datetime.timedelta(days=365)
 end = datetime.datetime.now()
+
 request_params = StockBarsRequest(
     symbol_or_symbols=symbols,
     timeframe=TimeFrame.Day,
@@ -35,20 +53,20 @@ request_params = StockBarsRequest(
 )
 bars = data_client.get_stock_bars(request_params).df
 
-# CSV log file
-log_file = "trade_log.csv"
-if not os.path.exists(log_file):
-    pd.DataFrame(columns=[
-        "timestamp", "symbol", "predicted_price", "current_price", "signal", "action_taken"
-    ]).to_csv(log_file, index=False)
+# -----------------------------
+# FUNCTIONS
+# -----------------------------
+def preprocess_data(df, scaler, window_size=60):
+    scaled = scaler.transform(df)
+    X = [scaled[-window_size:]]
+    return np.array(X).reshape(1, window_size, 1)
 
 def predict_next_price(model, df, scaler):
-    X = scaler.transform(df)[-window_size:]
-    X = np.array([X]).reshape(1, window_size, 1)
+    X = preprocess_data(df, scaler, window_size)
     pred_scaled = model.predict(X, verbose=0)
-    predicted = scaler.inverse_transform([[pred_scaled[0][0]]])[0][0]
-    current = df[-1][0]
-    return predicted, current
+    predicted_price = scaler.inverse_transform([[pred_scaled[0][0]]])[0][0]
+    last_price = df[-1][0]
+    return predicted_price, last_price
 
 def generate_signal(predicted, current, threshold=0.01):
     change = (predicted - current) / current
@@ -59,43 +77,71 @@ def generate_signal(predicted, current, threshold=0.01):
     return "hold"
 
 def execute_trade(symbol, signal, current_price):
-    global available_cash
+    global available_cash, held_symbols
     action_taken = "none"
+
     if signal == "buy":
-        if symbol in held_symbols or available_cash < current_price:
-            action_taken = "skip_buy"
+        if symbol in held_symbols:
+            action_taken = "skip_buy"  # Already holding
         else:
-            order = MarketOrderRequest(
-                symbol=symbol,
-                qty=1,
-                side=OrderSide.BUY,
-                time_in_force=TimeInForce.DAY
-            )
-            trading_client.submit_order(order)
-            action_taken = "buy"
+            max_cash = available_cash * RISK_PER_TRADE
+            qty_to_buy = int(max_cash // current_price)
+            if qty_to_buy <= 0:
+                action_taken = "skip_buy"
+            else:
+                order = MarketOrderRequest(
+                    symbol=symbol,
+                    qty=qty_to_buy,
+                    side=OrderSide.BUY,
+                    time_in_force=TimeInForce.DAY
+                )
+                trading_client.submit_order(order)
+                available_cash -= qty_to_buy * current_price
+                held_symbols.add(symbol)
+                action_taken = f"buy_{qty_to_buy}"
+
     elif signal == "sell":
         if symbol not in held_symbols:
             action_taken = "skip_sell"
         else:
-            order = MarketOrderRequest(
-                symbol=symbol,
-                qty=1,
-                side=OrderSide.SELL,
-                time_in_force=TimeInForce.DAY
-            )
-            trading_client.submit_order(order)
-            action_taken = "sell"
+            positions_dict = {pos.symbol: int(pos.qty) for pos in trading_client.get_all_positions()}
+            qty_to_sell = positions_dict.get(symbol, 0)
+            if qty_to_sell > 0:
+                order = MarketOrderRequest(
+                    symbol=symbol,
+                    qty=qty_to_sell,
+                    side=OrderSide.SELL,
+                    time_in_force=TimeInForce.DAY
+                )
+                trading_client.submit_order(order)
+                available_cash += qty_to_sell * current_price
+                held_symbols.remove(symbol)
+                action_taken = f"sell_{qty_to_sell}"
     else:
         action_taken = "hold"
+
+    # Log trade
+    log_trade(symbol, signal, current_price, action_taken)
     return action_taken
 
-# Run predictions and execute trades
+def log_trade(symbol, signal, price, action):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    df = pd.DataFrame([[timestamp, symbol, signal, price, action]],
+                      columns=["timestamp", "symbol", "signal", "price", "action"])
+    if os.path.exists(TRADE_LOG):
+        df.to_csv(TRADE_LOG, mode="a", header=False, index=False)
+    else:
+        df.to_csv(TRADE_LOG, index=False)
+
+# -----------------------------
+# MAIN LOOP
+# -----------------------------
 for symbol in symbols:
     try:
-        model = load_model(f"{models_dir}/{symbol}_lstm_model.h5")
-        scaler = joblib.load(f"{models_dir}/{symbol}_scaler.save")
+        model = load_model(f"trained_models/{symbol}_lstm_model.h5")
+        scaler = joblib.load(f"trained_models/{symbol}_scaler.save")
     except:
-        print(f"No model/scaler for {symbol}, skipping.")
+        print(f"No model for {symbol}, skipping.")
         continue
 
     df = bars.loc[bars.index.get_level_values("symbol") == symbol, ["close"]].values
@@ -104,15 +150,6 @@ for symbol in symbols:
 
     predicted, current = predict_next_price(model, df, scaler)
     signal = generate_signal(predicted, current)
-    action_taken = execute_trade(symbol, signal, current)
+    execute_trade(symbol, signal, current)
 
-    # Log trade
-    log_entry = pd.DataFrame([{
-        "timestamp": datetime.datetime.now().isoformat(),
-        "symbol": symbol,
-        "predicted_price": round(predicted, 2),
-        "current_price": round(current, 2),
-        "signal": signal,
-        "action_taken": action_taken
-    }])
-    log_entry.to_csv(log_file, mode="a", header=False, index=False)
+print("✅ Trading cycle complete")
