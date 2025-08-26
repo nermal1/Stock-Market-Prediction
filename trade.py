@@ -14,8 +14,8 @@ from alpaca.trading.requests import MarketOrderRequest
 
 from config import symbols, window_size  # ✅ shared config
 
-API_KEY = os.getenv("ALPACA_KEY")
-API_SECRET = os.getenv("ALPACA_SECRET")
+API_KEY = os.getenv("APCA_API_KEY_ID")
+API_SECRET = os.getenv("APCA_API_SECRET_KEY")
 
 data_client = StockHistoricalDataClient(API_KEY, API_SECRET)
 trading_client = TradingClient(API_KEY, API_SECRET, paper=True)
