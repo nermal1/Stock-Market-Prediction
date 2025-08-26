@@ -8,7 +8,7 @@ While predicting stock prices is a gamble since there are so many different fact
 <br> <br>
 
 ## Goals
-For this project I want to be able to show that using machine learning predicting the stock market and making a profit is possible. Many people have any extra money they have in a savings account that might not even make 1% apy. I want to prove that taking a risk it is possible to make much more money and provide yourself a better and safer future financially.
+For this project I want to be able to show that using machine learning predicting the stock market and making a profit is possible. Many people have any extra money they have in a savings account that might not even make 1% apy. By using machine learning we can prove that it is possible to make more money than the average savings account.
 
 ## Steps
 To get started with this project we will need to get some data from the stock market, I was recommended using Alpaca API (https://alpaca.markets/) and it turns out it works very well for stock market data. First we will need an idea of what stocks to invest in. 
