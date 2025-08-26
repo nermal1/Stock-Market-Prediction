@@ -12,8 +12,8 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dropout, Dense
 
 # Load API keys
-API_KEY = os.getenv("APCA_API_KEY_ID")
-API_SECRET = os.getenv("APCA_API_SECRET_KEY")
+API_KEY = os.getenv("ALPACA_KEY")
+API_SECRET = os.getenv("ALPACA_SECRET")
 
 data_client = StockHistoricalDataClient(API_KEY, API_SECRET)
 
