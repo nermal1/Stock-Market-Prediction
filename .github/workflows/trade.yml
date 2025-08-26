@@ -1,4 +1,4 @@
-name: Trade
+name: Train & Trade
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  trade:
+  trade_and_train:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -17,13 +17,13 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Download trained models
-        uses: actions/download-artifact@v4
-        with:
-          name: trained-models
-          path: trained_models/
+      - name: Train models
+        env:
+          APCA_API_KEY_ID: ${{ secrets.ALPACA_KEY }}
+          APCA_API_SECRET_KEY: ${{ secrets.ALPACA_SECRET }}
+        run: python train_models.py
 
-      - name: Run trading
+      - name: Execute trades
         env:
           APCA_API_KEY_ID: ${{ secrets.ALPACA_KEY }}
           APCA_API_SECRET_KEY: ${{ secrets.ALPACA_SECRET }}
