@@ -2,7 +2,7 @@ name: Trade
 
 on:
   schedule:
-    - cron: "0 14,20 * * *"  
+    - cron: "0 14,20 * * *"  # 14:00 and 20:00 UTC daily
   workflow_dispatch:
 
 jobs:
@@ -10,11 +10,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
       - uses: actions/setup-python@v4
         with:
           python-version: "3.10"
+
       - run: pip install -r requirements.txt
-      - run: python trade.py
+
+      - name: Download trained models
+        uses: actions/download-artifact@v3
+        with:
+          name: trained-models
+          path: trained_models/
+
+      - name: Run trading
         env:
           APCA_API_KEY_ID: ${{ secrets.ALPACA_KEY }}
           APCA_API_SECRET_KEY: ${{ secrets.ALPACA_SECRET }}
+        run: python trade.py
