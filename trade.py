@@ -18,7 +18,7 @@ API_SECRET = os.getenv("ALPACA_SECRET")
 
 symbols = ["JPM", "KULR", "META", "MS", "MU", "NVDA", "OKLO", "AVGO"]
 window_size = 60
-risk_fraction = 0.03  # risk 3% of capital per buy
+risk_fraction = 0.05  # risk 5% of capital per buy
 TRADE_LOG = "trade_log.csv"
 
 # --- CLIENTS ---
