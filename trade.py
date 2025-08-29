@@ -3,6 +3,19 @@ import csv
 import os
 from datetime import datetime
 
+import os 
+import datetime 
+import joblib 
+import numpy as np 
+import pandas as pd 
+from tensorflow.keras.models import load_model 
+from alpaca.data.historical import StockHistoricalDataClient 
+from alpaca.data.requests import StockBarsRequest 
+from alpaca.data.timeframe import TimeFrame 
+from alpaca.trading.client import TradingClient 
+from alpaca.trading.enums import OrderSide, TimeInForce 
+from alpaca.trading.requests import MarketOrderRequest
+
 # Alpaca API setup
 API_KEY = "YOUR_API_KEY"
 API_SECRET = "YOUR_API_SECRET"
