@@ -1,108 +1,132 @@
-import alpaca_trade_api as tradeapi
-import csv
 import os
-from datetime import datetime
+import datetime
+import joblib
+import numpy as np
+import pandas as pd
 
-import os 
-import datetime 
-import joblib 
-import numpy as np 
-import pandas as pd 
-from tensorflow.keras.models import load_model 
-from alpaca.data.historical import StockHistoricalDataClient 
-from alpaca.data.requests import StockBarsRequest 
-from alpaca.data.timeframe import TimeFrame 
-from alpaca.trading.client import TradingClient 
-from alpaca.trading.enums import OrderSide, TimeInForce 
+from tensorflow.keras.models import load_model
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
+from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
 
-# Alpaca API setup
-API_KEY = "YOUR_API_KEY"
-API_SECRET = "YOUR_API_SECRET"
-BASE_URL = "https://paper-api.alpaca.markets"  # use paper trading
+# --- CONFIG ---
+API_KEY = os.getenv("ALPACA_KEY")
+API_SECRET = os.getenv("ALPACA_SECRET")
 
-api = tradeapi.REST(API_KEY, API_SECRET, BASE_URL, api_version="v2")
+symbols = ["JPM", "KULR", "META", "MS", "MU", "NVDA", "OKLO", "AVGO"]
+window_size = 60
+risk_fraction = 0.05  # risk 5% of capital per buy
+TRADE_LOG = "trade_log.csv"
 
-# Path for log file
-LOG_FILE = "trade_log.csv"
+# --- CLIENTS ---
+data_client = StockHistoricalDataClient(API_KEY, API_SECRET)
+trading_client = TradingClient(API_KEY, API_SECRET, paper=True)
 
-# Initialize CSV file with headers if not already present
-if not os.path.exists(LOG_FILE):
-    with open(LOG_FILE, mode="w", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow(["timestamp", "symbol", "action", "qty", "price", "capital"])
-
-
+# --- HELPER FUNCTIONS ---
 def log_trade(symbol, action, qty, price, capital):
-    """Log every trade action to CSV file immediately."""
-    with open(LOG_FILE, mode="a", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow([
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            symbol,
-            action,
-            qty,
-            round(price, 2) if price else None,
-            round(capital, 2)
-        ])
+    log_file = TRADE_LOG
+    row = {
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "symbol": symbol,
+        "action": action,
+        "quantity": qty,
+        "price": round(price, 2),
+        "capital": round(capital, 2)
+    }
+    if os.path.exists(log_file):
+        pd.DataFrame([row]).to_csv(log_file, mode="a", header=False, index=False)
+    else:
+        pd.DataFrame([row]).to_csv(log_file, index=False)
 
+def preprocess_data(df, scaler):
+    scaled = scaler.transform(df)
+    X = [scaled[-window_size:]]
+    return np.array(X).reshape(1, window_size, 1)
 
-def trade_stock(symbol, action, capital, price=None):
-    """
-    Execute a trade (buy/sell/hold) and log it.
-    - symbol: stock ticker
-    - action: "buy", "sell", or "hold"
-    - capital: current account capital
-    - price: optional stock price for logging
-    """
+def predict_next_price(model, df, scaler):
+    X = preprocess_data(df, scaler)
+    pred_scaled = model.predict(X, verbose=0)
+    predicted_price = scaler.inverse_transform([[pred_scaled[0][0]]])[0][0]
+    last_price = df[-1][0]
+    return predicted_price, last_price
 
-    # If HOLD: log but don’t submit an order
-    if action.lower() == "hold":
-        log_trade(symbol, "HOLD", 0, price, capital)
-        return
+def generate_signal(predicted, current, threshold=0.01):
+    change = (predicted - current) / current
+    if change > threshold:
+        return "buy"
+    elif change < -threshold:
+        return "sell"
+    return "hold"
 
-    try:
-        # Get latest market price if not provided
-        if price is None:
-            barset = api.get_latest_trade(symbol)
-            price = barset.price
+def execute_trade(symbol, signal, current_price, available_cash, held_qty):
+    action_taken = "hold"
+    qty = 0  
 
-        # Risk management: trade with 3% of capital
-        trade_amount = capital * 0.03
-        qty = int(trade_amount // price)
-
-        if qty <= 0:
-            print(f"Not enough capital to trade {symbol}")
-            return
-
-        if action.lower() == "buy":
-            api.submit_order(
+    if signal == "buy":
+        max_qty = int((available_cash * risk_fraction) // current_price)
+        if max_qty > 0:
+            order = MarketOrderRequest(
                 symbol=symbol,
-                qty=qty,
-                side="buy",
-                type="market",
-                time_in_force="gtc"
+                qty=max_qty,
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY
             )
-            log_trade(symbol, "BUY", qty, price, capital)
+            trading_client.submit_order(order)
+            action_taken = "buy"
+            qty = max_qty
+            print(f"BUY {max_qty} shares of {symbol} at ${current_price:.2f}")
+        else:
+            action_taken = "skip_buy"
+            print(f"Not enough cash to buy {symbol}")
 
-        elif action.lower() == "sell":
-            # Sell ALL holdings for this stock
-            position = api.get_position(symbol)
-            qty = int(position.qty)
+    elif signal == "sell":
+        if held_qty > 0:
+            order = MarketOrderRequest(
+                symbol=symbol,
+                qty=held_qty,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY
+            )
+            trading_client.submit_order(order)
+            action_taken = "sell"
+            qty = held_qty
+            print(f"SELL {held_qty} shares of {symbol} at ${current_price:.2f}")
+        else:
+            action_taken = "skip_sell"
+            print(f"No shares to sell for {symbol}")
 
-            if qty > 0:
-                api.submit_order(
-                    symbol=symbol,
-                    qty=qty,
-                    side="sell",
-                    type="market",
-                    time_in_force="gtc"
-                )
-                log_trade(symbol, "SELL", qty, price, capital)
-            else:
-                print(f"No holdings to sell for {symbol}")
-                log_trade(symbol, "SELL_ATTEMPT_NO_HOLDINGS", 0, price, capital)
+    # ✅ Always log decision, even hold/skip
+    log_trade(symbol, action_taken, qty, current_price, available_cash)
 
-    except Exception as e:
-        print(f"Error trading {symbol}: {e}")
-        log_trade(symbol, "ERROR", 0, price, capital)
+
+# --- MAIN ---
+account = trading_client.get_account()
+available_cash = float(account.cash)
+positions = trading_client.get_all_positions()
+held_symbols_qty = {pos.symbol: int(pos.qty) for pos in positions}
+
+# Fetch historical data
+start = datetime.datetime.now() - datetime.timedelta(days=365)
+end = datetime.datetime.now()
+request_params = StockBarsRequest(symbol_or_symbols=symbols, timeframe=TimeFrame.Day, start=start, end=end, feed="iex")
+bars = data_client.get_stock_bars(request_params).df
+
+for symbol in symbols:
+    try:
+        model = load_model(f"trained_models/{symbol}_lstm_model.h5")
+        scaler = joblib.load(f"trained_models/{symbol}_scaler.save")
+    except:
+        print(f"No model/scaler found for {symbol}, skipping.")
+        continue
+
+    df = bars.loc[bars.index.get_level_values("symbol") == symbol, ["close"]].values
+    if len(df) < window_size + 1:
+        continue
+
+    predicted, current = predict_next_price(model, df, scaler)
+    signal = generate_signal(predicted, current)
+    held_qty = held_symbols_qty.get(symbol, 0)
+    execute_trade(symbol, signal, current, available_cash, held_qty)
